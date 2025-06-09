@@ -1,0 +1,175 @@
+setwd("C:/Users/Reza/RStudio")
+data <- read.csv("cleaned_data.csv")
+data$diagnosis <- as.factor(data$diagnosis)
+
+log_model <- glm(diagnosis ~ radius_worst + concave_points_worst + area_worst +
+                 texture_worst + perimeter_worst,
+                 data = data, family = "binomial")
+
+summary(log_model)
+
+
+
+
+library(rpart)
+library(rpart.plot)
+
+tree_model <- rpart(diagnosis ~ radius_worst + concave_points_worst + area_worst +
+                    texture_worst + perimeter_worst,
+                    data = data, method = "class")
+
+rpart.plot(tree_model, extra = 106)
+
+
+
+
+library(randomForest)
+
+data$diagnosis <- as.factor(data$diagnosis)
+
+rf_model <- randomForest(diagnosis ~ radius_worst + concave_points_worst + area_worst +
+                         texture_worst + perimeter_worst,
+                         data = data, ntree = 500, importance = TRUE)
+
+print(rf_model)
+importance(rf_model)
+
+
+
+install.packages("e1071")  # فقط یک بار نیاز به نصب هست
+library(e1071)
+set.seed(123)
+n <- nrow(data)
+train_index <- sample(1:n, size = 0.8 * n)
+train <- data[train_index, ]
+test <- data[-train_index, ]
+
+svm_model <- svm(
+  diagnosis ~ radius_worst + perimeter_worst + concave_points_worst,
+  data = train,
+  kernel = "radial",       # می‌تونی "linear", "polynomial", "sigmoid" هم تست کنی
+  probability = TRUE
+)
+
+pred <- predict(svm_model, test)
+confusion_matrix <- table(Predicted = pred, Actual = test$diagnosis)
+print(confusion_matrix)
+
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+cat("Accuracy:", accuracy)
+
+
+
+
+library(randomForest)
+library(caret)
+library(ggplot2)
+library(pdp)  # اگر خواستی از آن استفاده کنی
+require(e1071)
+require(groupdata2)
+
+plot(rf_model, main = "نمودار خطای مدل جنگل تصادفی")
+
+varImpPlot(rf_model, 
+           main = "اهمیت ویژگی‌ها در مدل جنگل تصادفی",
+           pch = 19, col = "darkblue")
+
+
+
+svm.sens.train <- svm.spec.train <- svm.ppv.train <- svm.npv.train <- svm.acc.train <- c()
+svm.sens.test  <- svm.spec.test  <- svm.ppv.test  <- svm.npv.test  <- svm.acc.test  <- c()
+
+
+set.seed(123)  # برای تکرارپذیری
+data$ID <- as.factor(1:nrow(data))  # ID لازم نیست، ولی اگه خواستی نگهش دار
+
+n <- 100
+
+for (i in 1:n) {
+  # تقسیم دستی داده‌ها
+  train_index <- sample(1:nrow(data), size = 0.7 * nrow(data))
+  train <- data[train_index, ]
+  test <- data[-train_index, ]
+
+  # مدل SVM
+  model_svm <- svm(
+    diagnosis ~ radius_worst + perimeter_worst + concave_points_worst,
+    data = train,
+    kernel = "radial"
+  )
+
+  # پیش‌بینی
+  pred_train <- predict(model_svm, train)
+  pred_test <- predict(model_svm, test)
+
+  cm_train <- table(Actual = train$diagnosis, Predicted = pred_train)
+  cm_test <- table(Actual = test$diagnosis, Predicted = pred_test)
+
+  if (all(dim(cm_train) == c(2, 2)) && all(dim(cm_test) == c(2, 2))) {
+    svm.sens.train[i] <- cm_train[2,2] / rowSums(cm_train)[2]
+    svm.spec.train[i] <- cm_train[1,1] / rowSums(cm_train)[1]
+    svm.ppv.train[i]  <- cm_train[2,2] / colSums(cm_train)[2]
+    svm.npv.train[i]  <- cm_train[1,1] / colSums(cm_train)[1]
+    svm.acc.train[i]  <- sum(diag(cm_train)) / sum(cm_train)
+
+    svm.sens.test[i] <- cm_test[2,2] / rowSums(cm_test)[2]
+    svm.spec.test[i] <- cm_test[1,1] / rowSums(cm_test)[1]
+    svm.ppv.test[i]  <- cm_test[2,2] / colSums(cm_test)[2]
+    svm.npv.test[i]  <- cm_test[1,1] / colSums(cm_test)[1]
+    svm.acc.test[i]  <- sum(diag(cm_test)) / sum(cm_test)
+  }
+
+  print(paste("Iteration:", i))
+}
+
+
+
+# ساخت جدول خروجی نهایی
+table.svm <- matrix(0, 10, 2)
+table.svm[, 1] <- c(mean(svm.sens.train, na.rm = TRUE), mean(svm.spec.train, na.rm = TRUE), mean(svm.ppv.train, na.rm = TRUE),
+                    mean(svm.npv.train, na.rm = TRUE), mean(svm.acc.train, na.rm = TRUE),
+                    mean(svm.sens.test, na.rm = TRUE), mean(svm.spec.test, na.rm = TRUE), mean(svm.ppv.test, na.rm = TRUE),
+                    mean(svm.npv.test, na.rm = TRUE), mean(svm.acc.test, na.rm = TRUE))
+
+table.svm[, 2] <- c(sd(svm.sens.train, na.rm = TRUE), sd(svm.spec.train, na.rm = TRUE), sd(svm.ppv.train, na.rm = TRUE),
+                    sd(svm.npv.train, na.rm = TRUE), sd(svm.acc.train, na.rm = TRUE),
+                    sd(svm.sens.test, na.rm = TRUE), sd(svm.spec.test, na.rm = TRUE), sd(svm.ppv.test, na.rm = TRUE),
+                    sd(svm.npv.test, na.rm = TRUE), sd(svm.acc.test, na.rm = TRUE))
+
+colnames(table.svm) <- c("Mean", "SD")
+rownames(table.svm) <- c("svm.sens.train", "svm.spec.train", "svm.ppv.train", "svm.npv.train", "svm.acc.train",
+                         "svm.sens.test",  "svm.spec.test",  "svm.ppv.test",  "svm.npv.test",  "svm.acc.test")
+
+# نمایش نتایج
+table.svm
+
+
+
+# اگر نصب نیست:
+library(ggplot2)
+
+# آماده‌سازی داده برای نمودار
+metrics <- data.frame(
+  iteration = 1:100,
+  Accuracy_Train = svm.acc.train,
+  Accuracy_Test = svm.acc.test,
+  Sensitivity_Train = svm.sens.train,
+  Sensitivity_Test = svm.sens.test,
+  Specificity_Train = svm.spec.train,
+  Specificity_Test = svm.spec.test
+)
+
+# تغییر داده به فرمت long برای ggplot
+library(reshape2)
+metrics_long <- melt(metrics, id.vars = "iteration")
+
+# رسم نمودار
+ggplot(metrics_long, aes(x = iteration, y = value, color = variable)) +
+  geom_line(size = 1) +
+  labs(
+    title = "نمودار عملکرد مدل SVM در تکرارهای مختلف",
+    x = "تکرار",
+    y = "مقدار",
+    color = "معیار"
+  ) +
+  theme_minimal(base_family = "IRsans")  # اگر فونت فارسی داری
